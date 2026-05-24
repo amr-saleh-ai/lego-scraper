@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>All LEGO Sets</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">LEGO <span>Deals</span></div>
+    <nav class="nav">
+      <a href="/">Deals</a>
+      <a href="/sets.html" class="active">All Sets</a>
+      <a href="/admin.html">Admin</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <h1>All LEGO sets</h1>
+    <p>Browse every set imported from Brickset.</p>
+  </section>
+
+  <div class="filters">
+    <select id="themeFilter">
+      <option value="">All themes</option>
+    </select>
+  </div>
+
+  <div class="grid" id="grid"></div>
+  <p class="empty hidden" id="empty">No sets yet. Run a scrape from the Admin page.</p>
+
+  <script>
+    const grid = document.getElementById('grid');
+    const empty = document.getElementById('empty');
+    const themeFilter = document.getElementById('themeFilter');
+
+    function card(set) {
+      const badge = set.discountPercent > 0
+        ? `<span class="badge">-${set.discountPercent}%</span>` : '';
+
+      const original = set.originalPrice > set.currentPrice
+        ? `<span class="original">${set.formattedOriginal}</span>` : '';
+
+      const image = set.imageUrl
+        ? `<img src="${set.imageUrl}" alt="${set.name}" loading="lazy">` : '';
+
+      return `
+        <article class="card">
+          <div class="card-image">${image}${badge}</div>
+          <div class="card-body">
+            <p class="set-number">${set.setNumber}</p>
+            <h3>${set.name}</h3>
+            <p class="meta">${set.excerpt || set.theme || ''}</p>
+            <div class="prices">
+              <span class="current">${set.formattedCurrent}</span>
+              ${original}
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
+    async function loadThemes() {
+      const res = await fetch('/api/stats');
+      const data = await res.json();
+      themeFilter.innerHTML = '<option value="">All themes</option>' +
+        data.themes.map(t => `<option value="${t.theme}">${t.theme} (${t.count})</option>`).join('');
+    }
+
+    async function loadSets() {
+      const params = new URLSearchParams({ limit: '48' });
+      if (themeFilter.value) params.set('theme', themeFilter.value);
+
+      const res = await fetch('/api/sets?' + params);
+      const data = await res.json();
+
+      if (!data.sets.length) {
+        grid.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+
+      empty.classList.add('hidden');
+      grid.innerHTML = data.sets.map(card).join('');
+    }
+
+    themeFilter.addEventListener('change', loadSets);
+    loadThemes();
+    loadSets();
+  </script>
+</body>
+</html>

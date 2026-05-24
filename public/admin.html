@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — LEGO Deals</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">LEGO <span>Deals</span></div>
+    <nav class="nav">
+      <a href="/">Deals</a>
+      <a href="/sets.html">All Sets</a>
+      <a href="/admin.html" class="active">Admin</a>
+    </nav>
+  </header>
+
+  <div class="admin-wrap">
+    <section class="panel" id="loginPanel">
+      <h2>Admin login</h2>
+      <p>Enter the password set in your <code>ADMIN_PASSWORD</code> environment variable.</p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="password">Password</label>
+          <input type="password" id="password" autocomplete="current-password">
+        </div>
+        <button id="loginBtn">Sign in</button>
+      </div>
+    </section>
+
+    <div id="adminContent" class="hidden">
+      <div id="notice" class="notice hidden"></div>
+
+      <section class="panel">
+        <h2>Overview</h2>
+        <div class="stats-bar" id="stats" style="padding:0;margin:0;"></div>
+        <p id="lastRun" class="meta"></p>
+        <button id="scrapeBtn">Run Scrape Now</button>
+      </section>
+
+      <section class="panel">
+        <h2>Settings</h2>
+        <form id="settingsForm" class="form-grid">
+          <div class="form-row">
+            <label for="api_key">Brickset API Key</label>
+            <input type="text" id="api_key" name="api_key">
+            <small><a href="https://brickset.com/article/52664/api-version-3-documentation" target="_blank" rel="noopener">Get a free API key</a></small>
+          </div>
+          <div class="form-row">
+            <label for="user_hash">Brickset User Hash</label>
+            <input type="text" id="user_hash" name="user_hash">
+            <small>Optional — required for some API methods.</small>
+          </div>
+          <div class="form-row">
+            <label for="year">Import Year</label>
+            <input type="number" id="year" name="year" min="1950" max="2100">
+          </div>
+          <div class="form-row">
+            <label for="page_size">Page Size</label>
+            <input type="number" id="page_size" name="page_size" min="10" max="500">
+          </div>
+          <div class="form-row">
+            <label for="currency">Currency</label>
+            <select id="currency" name="currency">
+              <option value="US">USD ($)</option>
+              <option value="UK">GBP (£)</option>
+              <option value="CA">CAD (CA$)</option>
+              <option value="DE">EUR (€)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="deal_threshold">Deal Threshold (%)</label>
+            <input type="number" id="deal_threshold" name="deal_threshold" min="1" max="90">
+          </div>
+          <div class="form-row">
+            <label for="cron_schedule">Cron Schedule</label>
+            <input type="text" id="cron_schedule" name="cron_schedule" placeholder="0 6 * * *">
+            <small>Daily at 6am UTC by default. Uses standard cron syntax.</small>
+          </div>
+          <div class="form-row checkbox-row">
+            <input type="checkbox" id="cron_enabled" name="cron_enabled">
+            <label for="cron_enabled">Enable automatic scheduled scrapes</label>
+          </div>
+          <button type="submit">Save Settings</button>
+        </form>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    let token = sessionStorage.getItem('adminToken') || '';
+
+    const loginPanel = document.getElementById('loginPanel');
+    const adminContent = document.getElementById('adminContent');
+    const notice = document.getElementById('notice');
+
+    function showNotice(message, type = 'success') {
+      notice.textContent = message;
+      notice.className = `notice ${type}`;
+      notice.classList.remove('hidden');
+    }
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(options.headers || {}),
+        },
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Request failed');
+      return data;
+    }
+
+    function fillSettings(settings) {
+      for (const [key, value] of Object.entries(settings)) {
+        const el = document.getElementById(key);
+        if (!el) continue;
+        if (el.type === 'checkbox') {
+          el.checked = value === 'true' || value === true;
+        } else {
+          el.value = value;
+        }
+      }
+    }
+
+    function readSettingsForm() {
+      const form = document.getElementById('settingsForm');
+      const data = Object.fromEntries(new FormData(form));
+      data.cron_enabled = document.getElementById('cron_enabled').checked;
+      return data;
+    }
+
+    async function loadAdmin() {
+      const data = await api('/api/settings');
+      fillSettings(data.settings);
+
+      const stats = await fetch('/api/stats').then(r => r.json());
+      document.getElementById('stats').innerHTML = `
+        <div class="stat"><strong>${stats.total}</strong><span>sets</span></div>
+        <div class="stat"><strong>${stats.deals}</strong><span>deals</span></div>
+      `;
+
+      const last = data.lastRun;
+      document.getElementById('lastRun').textContent = last
+        ? `Last scrape: ${new Date(last.timestamp).toLocaleString()} — fetched ${last.stats?.fetched || 0}, ${last.stats?.deals || 0} deals`
+        : 'No scrape run yet.';
+    }
+
+    async function login() {
+      token = document.getElementById('password').value;
+      try {
+        await api('/api/settings');
+        sessionStorage.setItem('adminToken', token);
+        loginPanel.classList.add('hidden');
+        adminContent.classList.remove('hidden');
+        await loadAdmin();
+      } catch {
+        token = '';
+        sessionStorage.removeItem('adminToken');
+        showNotice('Invalid password.', 'error');
+      }
+    }
+
+    document.getElementById('loginBtn').addEventListener('click', login);
+    document.getElementById('password').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') login();
+    });
+
+    document.getElementById('settingsForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('/api/settings', {
+          method: 'POST',
+          body: JSON.stringify(readSettingsForm()),
+        });
+        showNotice('Settings saved.');
+        await loadAdmin();
+      } catch (err) {
+        showNotice(err.message, 'error');
+      }
+    });
+
+    document.getElementById('scrapeBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('scrapeBtn');
+      btn.disabled = true;
+      btn.textContent = 'Scraping…';
+      try {
+        const result = await api('/api/scrape', { method: 'POST' });
+        const s = result.stats;
+        showNotice(
+          result.success
+            ? `Done — fetched ${s.fetched}, created ${s.created}, updated ${s.updated}, ${s.deals} deals.`
+            : `Finished with errors: ${result.errors.join(', ')}`,
+          result.success ? 'success' : 'error'
+        );
+        await loadAdmin();
+      } catch (err) {
+        showNotice(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Scrape Now';
+      }
+    });
+
+    if (token) {
+      api('/api/settings').then(() => {
+        loginPanel.classList.add('hidden');
+        adminContent.classList.remove('hidden');
+        loadAdmin();
+      }).catch(() => {
+        token = '';
+        sessionStorage.removeItem('adminToken');
+      });
+    }
+  </script>
+</body>
+</html>

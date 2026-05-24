@@ -1,0 +1,6 @@
+node_modules/
+data/
+.env
+*.db
+lego-scraper.zip
+.DS_Store

@@ -1,0 +1,18 @@
+{
+  "name": "lego-scraper",
+  "version": "2.0.0",
+  "description": "LEGO deals tracker powered by Brickset",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.9.1",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3"
+  }
+}

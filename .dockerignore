@@ -1,0 +1,9 @@
+node_modules
+data
+.env
+.git
+*.db
+lego-scraper.zip
+includes
+assets
+*.php
