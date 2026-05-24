@@ -115,7 +115,7 @@ function scheduleCron() {
 
 scheduleCron();
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`LEGO Deals app running on port ${PORT}`);
 });
 
