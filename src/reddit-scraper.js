@@ -1,4 +1,11 @@
-const USER_AGENT = 'lego-scraper/2.0 (by amr-saleh-ai)';
+const USER_AGENT = 'web:lego-scraper:v2.0 (contact: admin@lego-deals.app)';
+
+const DEFAULT_SUBREDDITS = [
+  'legodeals',
+  'lego',
+  'legomarket',
+  'LegoDeals',
+];
 
 const SET_NUMBER_RE = /\b(\d{4,5}(?:-\d+)?)\b/;
 const US_PRICE_RE = /\$(\d+(?:\.\d{1,2})?)/;
@@ -10,6 +17,7 @@ const RETAILER_PATTERNS = [
   { pattern: /amazon/i, name: 'Amazon' },
   { pattern: /walmart/i, name: 'Walmart' },
   { pattern: /target/i, name: 'Target' },
+  { pattern: /woot/i, name: 'Woot' },
   { pattern: /lego\.com|lego store/i, name: 'LEGO.com' },
   { pattern: /best buy/i, name: 'Best Buy' },
   { pattern: /kohl'?s/i, name: "Kohl's" },
@@ -39,14 +47,16 @@ function cleanTitle(title) {
     .trim();
 }
 
-function parsePrice(title) {
-  let match = title.match(US_PRICE_RE);
+function parsePrice(text) {
+  if (!text) return null;
+
+  let match = text.match(US_PRICE_RE);
   if (match) return { price: parseFloat(match[1]), currency: 'US' };
 
-  match = title.match(UK_PRICE_RE);
+  match = text.match(UK_PRICE_RE);
   if (match) return { price: parseFloat(match[1]), currency: 'UK' };
 
-  match = title.match(EURO_PRICE_RE);
+  match = text.match(EURO_PRICE_RE);
   if (match) return { price: parseFloat(match[1]), currency: 'DE' };
 
   return null;
@@ -55,16 +65,18 @@ function parsePrice(title) {
 function parsePost(post) {
   const data = post.data;
   const title = data.title || '';
-  const setMatch = title.match(SET_NUMBER_RE);
+  const body = data.selftext || '';
+  const combined = `${title}\n${body}`;
 
+  const setMatch = combined.match(SET_NUMBER_RE);
   if (!setMatch) return null;
 
-  const priceInfo = parsePrice(title);
+  const priceInfo = parsePrice(title) || parsePrice(body);
   if (!priceInfo || priceInfo.price <= 0) return null;
 
   const setNumber = setMatch[1];
-  const retailer = detectRetailer(title) || detectRetailer(data.link_flair_text || '');
-  const percentOff = title.match(PERCENT_OFF_RE);
+  const retailer = detectRetailer(combined) || detectRetailer(data.link_flair_text || '');
+  const percentOff = combined.match(PERCENT_OFF_RE);
   const subreddit = data.subreddit || '';
   const name = cleanTitle(title) || title;
 
@@ -96,16 +108,28 @@ function parsePost(post) {
   };
 }
 
-async function fetchSubreddit(subreddit, limit) {
-  const url = `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/new.json?limit=${limit}`;
+function parseSubreddits(raw) {
+  const list = String(raw || '')
+    .split(',')
+    .map((s) => s.trim().replace(/^r\//i, ''))
+    .filter(Boolean);
+
+  return list.length ? list : DEFAULT_SUBREDDITS;
+}
+
+async function fetchSubredditListing(subreddit, sort, limit) {
+  const url = `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/${sort}.json?limit=${limit}`;
 
   const response = await fetch(url, {
-    headers: { 'User-Agent': USER_AGENT },
+    headers: {
+      'User-Agent': USER_AGENT,
+      Accept: 'application/json',
+    },
     signal: AbortSignal.timeout(30000),
   });
 
   if (!response.ok) {
-    throw new Error(`Reddit returned HTTP ${response.status} for r/${subreddit}`);
+    throw new Error(`Reddit HTTP ${response.status} for r/${subreddit}/${sort}`);
   }
 
   const body = await response.json();
@@ -113,15 +137,25 @@ async function fetchSubreddit(subreddit, limit) {
 }
 
 async function scrapeReddit(settings) {
-  const enabled = settings.reddit_enabled !== 'false';
-  if (!enabled) {
-    return { sets: [], errors: [], fetched: 0 };
+  const diagnostics = {
+    enabled: settings.reddit_enabled !== 'false',
+    subreddits: [],
+    postsSeen: 0,
+    parsed: 0,
+    skippedNoSetOrPrice: 0,
+  };
+
+  if (!diagnostics.enabled) {
+    return {
+      sets: [],
+      errors: ['Reddit scraping is disabled. Enable it in Admin settings or set REDDIT_ENABLED=true.'],
+      fetched: 0,
+      diagnostics,
+    };
   }
 
-  const subreddits = String(settings.reddit_subreddits || 'legodeals,lego')
-    .split(',')
-    .map((s) => s.trim().replace(/^r\//i, ''))
-    .filter(Boolean);
+  const subreddits = parseSubreddits(settings.reddit_subreddits);
+  diagnostics.subreddits = subreddits;
 
   const limit = Math.min(100, Math.max(10, Number(settings.reddit_post_limit) || 50));
   const errors = [];
@@ -129,25 +163,39 @@ async function scrapeReddit(settings) {
   const sets = [];
 
   for (const subreddit of subreddits) {
-    try {
-      const posts = await fetchSubreddit(subreddit, limit);
+    for (const sort of ['new', 'hot']) {
+      try {
+        const posts = await fetchSubredditListing(subreddit, sort, limit);
+        diagnostics.postsSeen += posts.length;
 
-      for (const post of posts) {
-        const parsed = parsePost(post);
-        if (!parsed) continue;
+        for (const post of posts) {
+          const parsed = parsePost(post);
+          if (!parsed) {
+            diagnostics.skippedNoSetOrPrice++;
+            continue;
+          }
 
-        const key = `${parsed.set_number}:${parsed.current_price}:${parsed.deal_url}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+          diagnostics.parsed++;
 
-        sets.push(parsed);
+          const key = `${parsed.set_number}:${parsed.current_price}:${parsed.deal_url}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          sets.push(parsed);
+        }
+      } catch (err) {
+        errors.push(err.message);
       }
-    } catch (err) {
-      errors.push(err.message);
     }
   }
 
-  return { sets, errors, fetched: sets.length };
+  if (!sets.length && !errors.length) {
+    errors.push(
+      `Checked r/${subreddits.join(', r/')} — saw ${diagnostics.postsSeen} posts but none had both a set number and price.`
+    );
+  }
+
+  return { sets, errors, fetched: sets.length, diagnostics };
 }
 
-module.exports = { scrapeReddit, parsePost };
+module.exports = { scrapeReddit, parsePost, DEFAULT_SUBREDDITS };

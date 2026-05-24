@@ -78,7 +78,7 @@ const defaults = {
   cron_enabled: process.env.CRON_ENABLED !== 'false' ? 'true' : 'false',
   cron_schedule: process.env.CRON_SCHEDULE || '0 6 * * *',
   reddit_enabled: process.env.REDDIT_ENABLED !== 'false' ? 'true' : 'false',
-  reddit_subreddits: process.env.REDDIT_SUBREDDITS || 'legodeals,lego',
+  reddit_subreddits: process.env.REDDIT_SUBREDDITS || 'legodeals,lego,legomarket,LegoDeals',
   reddit_post_limit: '50',
   scrape_brickset: 'true',
 };
@@ -100,7 +100,7 @@ function saveSettings(input) {
     cron_enabled: input.cron_enabled ? 'true' : 'false',
     cron_schedule: String(input.cron_schedule || '0 6 * * *'),
     reddit_enabled: input.reddit_enabled !== false && input.reddit_enabled !== 'false' ? 'true' : 'false',
-    reddit_subreddits: String(input.reddit_subreddits || 'legodeals,lego').trim(),
+    reddit_subreddits: String(input.reddit_subreddits || 'legodeals,lego,legomarket,LegoDeals').trim(),
     reddit_post_limit: String(Math.min(100, Math.max(10, Number(input.reddit_post_limit) || 50))),
     scrape_brickset: input.scrape_brickset !== false && input.scrape_brickset !== 'false' ? 'true' : 'false',
   };

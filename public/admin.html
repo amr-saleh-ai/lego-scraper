@@ -90,8 +90,8 @@
           </div>
           <div class="form-row">
             <label for="reddit_subreddits">Reddit Subreddits</label>
-            <input type="text" id="reddit_subreddits" name="reddit_subreddits" placeholder="legodeals,lego">
-            <small>Comma-separated. r/legodeals is the main deals subreddit.</small>
+            <input type="text" id="reddit_subreddits" name="reddit_subreddits" placeholder="legodeals,lego,legomarket,LegoDeals">
+            <small>Comma-separated subreddits (no r/ prefix needed). Defaults: legodeals, lego, legomarket, LegoDeals</small>
           </div>
           <div class="form-row">
             <label for="reddit_post_limit">Reddit Posts Per Subreddit</label>
@@ -216,7 +216,7 @@
         showNotice(
           result.success
             ? `Done — fetched ${s.fetched} (Reddit: ${s.reddit || 0}, Brickset: ${s.brickset || 0}), ${s.deals} deals.`
-            : `Finished with errors: ${result.errors.join(', ')}`,
+            : `Finished with issues: ${result.errors.join(' | ')}`,
           result.success ? 'success' : 'error'
         );
         await loadAdmin();

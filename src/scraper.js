@@ -161,7 +161,9 @@ function persistSets(sets, dealThreshold, stats) {
 async function runScrape({ sources = ['brickset', 'reddit'] } = {}) {
   const settings = getSettings();
   const errors = [];
+  const warnings = [];
   const stats = emptyStats();
+  const diagnostics = {};
   const dealThreshold = Number(settings.deal_threshold) || 10;
 
   if (sources.includes('brickset')) {
@@ -169,6 +171,14 @@ async function runScrape({ sources = ['brickset', 'reddit'] } = {}) {
     stats.brickset = brickset.sets.length;
     stats.fetched += brickset.sets.length;
     errors.push(...brickset.errors);
+    diagnostics.brickset = {
+      enabled: settings.scrape_brickset !== 'false',
+      hasApiKey: Boolean(settings.api_key),
+      fetched: brickset.sets.length,
+    };
+    if (settings.scrape_brickset !== 'false' && !settings.api_key) {
+      warnings.push('Brickset skipped — no API key configured.');
+    }
     persistSets(brickset.sets, dealThreshold, stats);
   }
 
@@ -177,17 +187,24 @@ async function runScrape({ sources = ['brickset', 'reddit'] } = {}) {
     stats.reddit = reddit.fetched;
     stats.fetched += reddit.fetched;
     errors.push(...reddit.errors);
+    diagnostics.reddit = reddit.diagnostics;
+    if (reddit.diagnostics?.enabled && reddit.fetched === 0 && reddit.errors.length === 0) {
+      warnings.push(
+        `Reddit: checked ${reddit.diagnostics.subreddits.map((s) => 'r/' + s).join(', ')} — ${reddit.diagnostics.postsSeen} posts seen, 0 matched.`
+      );
+    }
     persistSets(reddit.sets, dealThreshold, stats);
   }
 
-  if (stats.fetched === 0 && errors.length === 0) {
-    errors.push('No sets were returned. Check your API key or Reddit subreddit settings.');
+  if (stats.fetched === 0 && errors.length === 0 && warnings.length === 0) {
+    errors.push('No sets were returned. Check Reddit subreddit settings and Brickset API key.');
   }
 
   const summary = {
-    success: stats.errors === 0,
+    success: stats.errors === 0 && stats.fetched > 0,
     stats,
-    errors: [...errors, ...(stats.errorMessages || [])],
+    errors: [...errors, ...(stats.errorMessages || []), ...warnings],
+    diagnostics,
   };
 
   delete summary.stats.errorMessages;
