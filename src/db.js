@@ -37,6 +37,9 @@ db.exec(`
     currency TEXT DEFAULT 'US',
     source_name TEXT DEFAULT 'Brickset',
     excerpt TEXT,
+    deal_url TEXT,
+    reddit_url TEXT,
+    retailer TEXT,
     last_synced INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -47,6 +50,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sets_discount ON sets(discount_percent DESC);
 `);
 
+function migrateColumns() {
+  const columns = db.prepare('PRAGMA table_info(sets)').all().map((c) => c.name);
+  const additions = [
+    'ALTER TABLE sets ADD COLUMN deal_url TEXT',
+    'ALTER TABLE sets ADD COLUMN reddit_url TEXT',
+    'ALTER TABLE sets ADD COLUMN retailer TEXT',
+  ];
+
+  for (const sql of additions) {
+    const col = sql.match(/ADD COLUMN (\w+)/)[1];
+    if (!columns.includes(col)) {
+      db.exec(sql);
+    }
+  }
+}
+
+migrateColumns();
+
 const defaults = {
   api_key: process.env.BRICKSET_API_KEY || '',
   user_hash: process.env.BRICKSET_USER_HASH || '',
@@ -56,6 +77,10 @@ const defaults = {
   deal_threshold: '10',
   cron_enabled: process.env.CRON_ENABLED !== 'false' ? 'true' : 'false',
   cron_schedule: process.env.CRON_SCHEDULE || '0 6 * * *',
+  reddit_enabled: process.env.REDDIT_ENABLED !== 'false' ? 'true' : 'false',
+  reddit_subreddits: process.env.REDDIT_SUBREDDITS || 'legodeals,lego',
+  reddit_post_limit: '50',
+  scrape_brickset: 'true',
 };
 
 function getSettings() {
@@ -74,6 +99,10 @@ function saveSettings(input) {
     deal_threshold: String(Math.min(90, Math.max(1, Number(input.deal_threshold) || 10))),
     cron_enabled: input.cron_enabled ? 'true' : 'false',
     cron_schedule: String(input.cron_schedule || '0 6 * * *'),
+    reddit_enabled: input.reddit_enabled !== false && input.reddit_enabled !== 'false' ? 'true' : 'false',
+    reddit_subreddits: String(input.reddit_subreddits || 'legodeals,lego').trim(),
+    reddit_post_limit: String(Math.min(100, Math.max(10, Number(input.reddit_post_limit) || 50))),
+    scrape_brickset: input.scrape_brickset !== false && input.scrape_brickset !== 'false' ? 'true' : 'false',
   };
 
   const stmt = db.prepare(`
@@ -104,7 +133,25 @@ function setLastRun(summary) {
 }
 
 function findSet(setNumber) {
-  return db.prepare('SELECT * FROM sets WHERE set_number = ?').get(setNumber);
+  const exact = db.prepare('SELECT * FROM sets WHERE set_number = ?').get(setNumber);
+  if (exact) return exact;
+
+  const base = setNumber.split('-')[0];
+  if (base !== setNumber) {
+    return db.prepare(`
+      SELECT * FROM sets
+      WHERE set_number = ? OR set_number LIKE ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get(base, `${base}-%`);
+  }
+
+  return db.prepare(`
+    SELECT * FROM sets
+    WHERE set_number LIKE ?
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get(`${base}-%`);
 }
 
 function upsertSet(data, dealThreshold) {
@@ -112,8 +159,17 @@ function upsertSet(data, dealThreshold) {
   const now = Date.now();
   const previousPrice = existing ? existing.current_price : 0;
   const currentPrice = Number(data.current_price) || 0;
-  let originalPrice = Number(data.original_price) || currentPrice;
-  if (originalPrice <= 0 && currentPrice > 0) originalPrice = currentPrice;
+
+  let originalPrice = Number(data.original_price) || 0;
+  if (existing?.original_price > originalPrice) {
+    originalPrice = existing.original_price;
+  }
+  if (originalPrice <= 0 && existing?.original_price > 0) {
+    originalPrice = existing.original_price;
+  }
+  if (originalPrice <= 0 && currentPrice > 0) {
+    originalPrice = currentPrice;
+  }
 
   let discount = 0;
   if (originalPrice > 0 && currentPrice > 0 && currentPrice < originalPrice) {
@@ -121,19 +177,44 @@ function upsertSet(data, dealThreshold) {
   }
 
   const priceDropped = previousPrice > 0 && currentPrice > 0 && currentPrice < previousPrice;
-  const isDeal = discount >= dealThreshold || priceDropped ? 1 : 0;
+  const fromReddit = Boolean(data.from_reddit);
+  const isDeal = fromReddit || discount >= dealThreshold || priceDropped ? 1 : 0;
+
+  const merged = {
+    set_number: existing?.set_number || data.set_number,
+    name: data.name || existing?.name,
+    theme: data.theme || existing?.theme || '',
+    subtheme: data.subtheme || existing?.subtheme || '',
+    year: data.year || existing?.year || 0,
+    pieces: data.pieces || existing?.pieces || 0,
+    availability: data.availability || existing?.availability || '',
+    image_url: data.image_url || existing?.image_url || '',
+    brickset_url: data.brickset_url || existing?.brickset_url || '',
+    deal_url: data.deal_url || existing?.deal_url || '',
+    reddit_url: data.reddit_url || existing?.reddit_url || '',
+    retailer: data.retailer || existing?.retailer || '',
+    current_price: currentPrice || existing?.current_price || 0,
+    original_price: originalPrice,
+    currency: data.currency || existing?.currency || 'US',
+    source_name: fromReddit && existing ? `${existing.source_name} + Reddit` : (data.source_name || existing?.source_name || 'Brickset'),
+    excerpt: data.excerpt || existing?.excerpt || '',
+  };
 
   if (existing) {
     db.prepare(`
       UPDATE sets SET
+        set_number = @set_number,
         name = @name,
         theme = @theme,
         subtheme = @subtheme,
         year = @year,
         pieces = @pieces,
         availability = @availability,
-        image_url = COALESCE(@image_url, image_url),
-        brickset_url = @brickset_url,
+        image_url = COALESCE(NULLIF(@image_url, ''), image_url),
+        brickset_url = COALESCE(NULLIF(@brickset_url, ''), brickset_url),
+        deal_url = COALESCE(NULLIF(@deal_url, ''), deal_url),
+        reddit_url = COALESCE(NULLIF(@reddit_url, ''), reddit_url),
+        retailer = COALESCE(NULLIF(@retailer, ''), retailer),
         current_price = @current_price,
         original_price = @original_price,
         previous_price = @previous_price,
@@ -144,9 +225,10 @@ function upsertSet(data, dealThreshold) {
         excerpt = @excerpt,
         last_synced = @last_synced,
         updated_at = @updated_at
-      WHERE set_number = @set_number
+      WHERE id = @existing_id
     `).run({
-      ...data,
+      ...merged,
+      existing_id: existing.id,
       previous_price: previousPrice,
       discount_percent: discount,
       is_deal: isDeal,
@@ -160,17 +242,19 @@ function upsertSet(data, dealThreshold) {
   db.prepare(`
     INSERT INTO sets (
       set_number, name, theme, subtheme, year, pieces, availability,
-      image_url, brickset_url, current_price, original_price, previous_price,
+      image_url, brickset_url, deal_url, reddit_url, retailer,
+      current_price, original_price, previous_price,
       discount_percent, is_deal, currency, source_name, excerpt,
       last_synced, created_at, updated_at
     ) VALUES (
       @set_number, @name, @theme, @subtheme, @year, @pieces, @availability,
-      @image_url, @brickset_url, @current_price, @original_price, @previous_price,
+      @image_url, @brickset_url, @deal_url, @reddit_url, @retailer,
+      @current_price, @original_price, @previous_price,
       @discount_percent, @is_deal, @currency, @source_name, @excerpt,
       @last_synced, @created_at, @updated_at
     )
   `).run({
-    ...data,
+    ...merged,
     previous_price: 0,
     discount_percent: discount,
     is_deal: isDeal,

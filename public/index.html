@@ -18,7 +18,7 @@
 
   <section class="hero">
     <h1>Best LEGO deals</h1>
-    <p>Sets imported from Brickset with automatic price-drop detection between scrapes.</p>
+    <p>Real deals scraped from Reddit (r/legodeals) with catalog data from Brickset.</p>
   </section>
 
   <div class="stats-bar" id="stats"></div>
@@ -47,6 +47,12 @@
         ? `<span class="original">${set.formattedOriginal}</span>`
         : '';
 
+      const links = [
+        set.dealUrl ? `<a href="${set.dealUrl}" target="_blank" rel="noopener">View deal</a>` : '',
+        set.redditUrl ? `<a href="${set.redditUrl}" target="_blank" rel="noopener">Reddit post</a>` : '',
+        set.bricksetUrl ? `<a href="${set.bricksetUrl}" target="_blank" rel="noopener">Brickset</a>` : '',
+      ].filter(Boolean).join(' · ');
+
       const image = set.imageUrl
         ? `<img src="${set.imageUrl}" alt="${set.name}" loading="lazy">`
         : '';
@@ -57,12 +63,12 @@
           <div class="card-body">
             <p class="set-number">${set.setNumber}</p>
             <h3>${set.name}</h3>
-            <p class="meta">${set.excerpt || set.theme || ''}</p>
+            <p class="meta">${set.retailer ? set.retailer + ' · ' : ''}${set.excerpt || set.theme || ''}</p>
             <div class="prices">
               <span class="current">${set.formattedCurrent}</span>
               ${original}
             </div>
-            ${set.bricksetUrl ? `<p class="meta"><a href="${set.bricksetUrl}" target="_blank" rel="noopener">View on Brickset</a></p>` : ''}
+            ${links ? `<p class="meta">${links}</p>` : ''}
           </div>
         </article>
       `;

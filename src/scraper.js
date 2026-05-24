@@ -3,6 +3,7 @@ const {
   setLastRun,
   upsertSet,
 } = require('./db');
+const { scrapeReddit } = require('./reddit-scraper');
 
 const CURRENCY_SYMBOLS = { US: '$', UK: '£', CA: 'CA$', DE: '€' };
 
@@ -10,6 +11,19 @@ function formatPrice(amount, currency = 'US') {
   if (!amount || amount <= 0) return 'N/A';
   const symbol = CURRENCY_SYMBOLS[currency] || '$';
   return `${symbol}${Number(amount).toFixed(2)}`;
+}
+
+function emptyStats() {
+  return {
+    fetched: 0,
+    created: 0,
+    updated: 0,
+    deals: 0,
+    skipped: 0,
+    errors: 0,
+    brickset: 0,
+    reddit: 0,
+  };
 }
 
 async function fetchPage(settings, page) {
@@ -81,40 +95,37 @@ function normalizeSet(raw, settings) {
     pieces: Number(raw.pieces) || 0,
     availability: String(raw.availability || '').trim(),
     brickset_url: String(raw.bricksetURL || '').trim(),
+    deal_url: '',
+    reddit_url: '',
+    retailer: '',
     excerpt: excerptParts.join(' · '),
   };
 }
 
-async function runScrape() {
-  const settings = getSettings();
+async function scrapeBrickset(settings) {
   const errors = [];
-  const stats = { fetched: 0, created: 0, updated: 0, deals: 0, skipped: 0, errors: 0 };
-  const dealThreshold = Number(settings.deal_threshold) || 10;
+  const results = [];
 
-  if (!settings.api_key) {
-    return {
-      success: false,
-      stats,
-      errors: ['Add your Brickset API key in Admin before running a scrape.'],
-    };
+  if (settings.scrape_brickset === 'false') {
+    return { sets: results, errors };
   }
 
-  const results = [];
+  if (!settings.api_key) {
+    errors.push('Add your Brickset API key to scrape catalog data.');
+    return { sets: results, errors };
+  }
+
   let page = 1;
   const pageSize = Number(settings.page_size);
 
   try {
     while (page <= 20) {
       const body = await fetchPage(settings, page);
-
       if (!body.sets?.length) break;
 
       for (const raw of body.sets) {
         const set = normalizeSet(raw, settings);
-        if (!set.set_number || !set.name) {
-          stats.skipped++;
-          continue;
-        }
+        if (!set.set_number || !set.name) continue;
         results.push(set);
       }
 
@@ -125,24 +136,61 @@ async function runScrape() {
     errors.push(err.message);
   }
 
-  stats.fetched = results.length;
+  return { sets: results, errors };
+}
 
-  for (const set of results) {
+function persistSets(sets, dealThreshold, stats) {
+  for (const set of sets) {
+    if (!set.set_number || !set.name) {
+      stats.skipped++;
+      continue;
+    }
+
     try {
       const outcome = upsertSet(set, dealThreshold);
       stats[outcome.status]++;
       if (outcome.is_deal) stats.deals++;
     } catch (err) {
       stats.errors++;
-      errors.push(err.message);
+      stats.errorMessages = stats.errorMessages || [];
+      stats.errorMessages.push(err.message);
     }
   }
+}
 
-  if (!results.length && !errors.length) {
-    errors.push('No sets were returned from Brickset.');
+async function runScrape({ sources = ['brickset', 'reddit'] } = {}) {
+  const settings = getSettings();
+  const errors = [];
+  const stats = emptyStats();
+  const dealThreshold = Number(settings.deal_threshold) || 10;
+
+  if (sources.includes('brickset')) {
+    const brickset = await scrapeBrickset(settings);
+    stats.brickset = brickset.sets.length;
+    stats.fetched += brickset.sets.length;
+    errors.push(...brickset.errors);
+    persistSets(brickset.sets, dealThreshold, stats);
   }
 
-  const summary = { success: errors.length === 0, stats, errors };
+  if (sources.includes('reddit')) {
+    const reddit = await scrapeReddit(settings);
+    stats.reddit = reddit.fetched;
+    stats.fetched += reddit.fetched;
+    errors.push(...reddit.errors);
+    persistSets(reddit.sets, dealThreshold, stats);
+  }
+
+  if (stats.fetched === 0 && errors.length === 0) {
+    errors.push('No sets were returned. Check your API key or Reddit subreddit settings.');
+  }
+
+  const summary = {
+    success: stats.errors === 0,
+    stats,
+    errors: [...errors, ...(stats.errorMessages || [])],
+  };
+
+  delete summary.stats.errorMessages;
   setLastRun(summary);
   return summary;
 }

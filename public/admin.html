@@ -36,7 +36,9 @@
         <h2>Overview</h2>
         <div class="stats-bar" id="stats" style="padding:0;margin:0;"></div>
         <p id="lastRun" class="meta"></p>
-        <button id="scrapeBtn">Run Scrape Now</button>
+        <button id="scrapeBtn">Run All Scrapes</button>
+        <button id="redditScrapeBtn" class="secondary" type="button">Scrape Reddit Only</button>
+        <button id="bricksetScrapeBtn" class="secondary" type="button">Scrape Brickset Only</button>
       </section>
 
       <section class="panel">
@@ -77,6 +79,23 @@
             <label for="cron_schedule">Cron Schedule</label>
             <input type="text" id="cron_schedule" name="cron_schedule" placeholder="0 6 * * *">
             <small>Daily at 6am UTC by default. Uses standard cron syntax.</small>
+          </div>
+          <div class="form-row checkbox-row">
+            <input type="checkbox" id="scrape_brickset" name="scrape_brickset">
+            <label for="scrape_brickset">Include Brickset catalog scrape</label>
+          </div>
+          <div class="form-row checkbox-row">
+            <input type="checkbox" id="reddit_enabled" name="reddit_enabled">
+            <label for="reddit_enabled">Include Reddit deal scrape</label>
+          </div>
+          <div class="form-row">
+            <label for="reddit_subreddits">Reddit Subreddits</label>
+            <input type="text" id="reddit_subreddits" name="reddit_subreddits" placeholder="legodeals,lego">
+            <small>Comma-separated. r/legodeals is the main deals subreddit.</small>
+          </div>
+          <div class="form-row">
+            <label for="reddit_post_limit">Reddit Posts Per Subreddit</label>
+            <input type="number" id="reddit_post_limit" name="reddit_post_limit" min="10" max="100">
           </div>
           <div class="form-row checkbox-row">
             <input type="checkbox" id="cron_enabled" name="cron_enabled">
@@ -132,6 +151,8 @@
       const form = document.getElementById('settingsForm');
       const data = Object.fromEntries(new FormData(form));
       data.cron_enabled = document.getElementById('cron_enabled').checked;
+      data.scrape_brickset = document.getElementById('scrape_brickset').checked;
+      data.reddit_enabled = document.getElementById('reddit_enabled').checked;
       return data;
     }
 
@@ -185,16 +206,16 @@
       }
     });
 
-    document.getElementById('scrapeBtn').addEventListener('click', async () => {
-      const btn = document.getElementById('scrapeBtn');
+    async function runScrapeEndpoint(path, btn, idleLabel) {
       btn.disabled = true;
+      const busyLabel = btn.textContent;
       btn.textContent = 'Scraping…';
       try {
-        const result = await api('/api/scrape', { method: 'POST' });
+        const result = await api(path, { method: 'POST' });
         const s = result.stats;
         showNotice(
           result.success
-            ? `Done — fetched ${s.fetched}, created ${s.created}, updated ${s.updated}, ${s.deals} deals.`
+            ? `Done — fetched ${s.fetched} (Reddit: ${s.reddit || 0}, Brickset: ${s.brickset || 0}), ${s.deals} deals.`
             : `Finished with errors: ${result.errors.join(', ')}`,
           result.success ? 'success' : 'error'
         );
@@ -203,9 +224,21 @@
         showNotice(err.message, 'error');
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Run Scrape Now';
+        btn.textContent = idleLabel || busyLabel;
       }
-    });
+    }
+
+    document.getElementById('scrapeBtn').addEventListener('click', () =>
+      runScrapeEndpoint('/api/scrape', document.getElementById('scrapeBtn'), 'Run All Scrapes')
+    );
+
+    document.getElementById('redditScrapeBtn').addEventListener('click', () =>
+      runScrapeEndpoint('/api/scrape/reddit', document.getElementById('redditScrapeBtn'), 'Scrape Reddit Only')
+    );
+
+    document.getElementById('bricksetScrapeBtn').addEventListener('click', () =>
+      runScrapeEndpoint('/api/scrape/brickset', document.getElementById('bricksetScrapeBtn'), 'Scrape Brickset Only')
+    );
 
     if (token) {
       api('/api/settings').then(() => {

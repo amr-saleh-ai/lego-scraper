@@ -135,6 +135,11 @@ button.secondary {
   border: 1px solid var(--border);
 }
 
+.admin-wrap .panel button.secondary {
+  margin-left: 8px;
+  margin-top: 8px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

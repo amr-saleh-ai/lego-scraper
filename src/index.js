@@ -61,8 +61,18 @@ app.post('/api/settings', requireAdmin, (req, res) => {
   res.json({ settings, lastRun: getLastRun() });
 });
 
-app.post('/api/scrape', requireAdmin, async (_req, res) => {
-  const result = await runScrape();
+app.post('/api/scrape', requireAdmin, async (req, res) => {
+  const result = await runScrape({ sources: ['brickset', 'reddit'] });
+  res.json(result);
+});
+
+app.post('/api/scrape/reddit', requireAdmin, async (_req, res) => {
+  const result = await runScrape({ sources: ['reddit'] });
+  res.json(result);
+});
+
+app.post('/api/scrape/brickset', requireAdmin, async (_req, res) => {
+  const result = await runScrape({ sources: ['brickset'] });
   res.json(result);
 });
 
@@ -84,6 +94,10 @@ function serializeSet(row) {
     formattedCurrent: formatPrice(row.current_price, row.currency),
     formattedOriginal: formatPrice(row.original_price, row.currency),
     excerpt: row.excerpt,
+    dealUrl: row.deal_url,
+    redditUrl: row.reddit_url,
+    retailer: row.retailer,
+    sourceName: row.source_name,
   };
 }
 
@@ -93,6 +107,8 @@ function publicSettings(settings) {
     currency: settings.currency,
     dealThreshold: settings.deal_threshold,
     cronEnabled: settings.cron_enabled === 'true',
+    redditEnabled: settings.reddit_enabled !== 'false',
+    redditSubreddits: settings.reddit_subreddits,
   };
 }
 
